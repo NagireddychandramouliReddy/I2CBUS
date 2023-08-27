@@ -1,0 +1,40 @@
+module i2c_tb; 
+ 
+ 	// Inputs 
+reg reset; reg clk; reg [6:0] addr; reg [7:0] data; reg start_bit; 
+ 	reg read_write; 
+ 
+ 	// Outputs  	wire [7:0] dout; 
+ 
+ 	// Bidirs  	wire sda; 
+ 
+ 	// Instantiate the Unit Under Test (UUT)  	i2c_bus_protocol uut ( 
+ 	 	.reset(reset),  
+ 	 	.clk(clk),  
+ 	 	.addr(addr),  
+ 	 	.data(data),  
+ 	 	.start_bit(start_bit),  
+ 	 	.sda(sda),  
+ 	 	.read_write(read_write),  
+ 	 	.dout(dout) 
+ 	); 
+ 	always #5 clk = ~clk;  	initial begin  	// Initialize Inputs  	reset = 1; 
+ 	clk = 0;  	addr = 7'h69;  	data = 8'h33; 
+ 	 	start_bit = 0;  	 	read_write = 0; 
+ 
+ 	 	// Wait 100 ns for global reset to finish 
+ 	 	#10000 reset = 0; start_bit = 1;//write to slave 
+ 	 	#10000 start_bit = 0; 
+ 	 	#230000 start_bit = 1; data = 8'h44;//write to slave 
+      #10000 start_bit = 0; 
+ 	 	#330000 start_bit = 1;read_write=1;//read from slave 
+ 	 	#10000 start_bit = 0; 
+ 	 	#330000 start_bit = 1;read_write=0;data = 8'h68;//write to slave 
+ 	 	#10000 start_bit = 0; 
+ 	 	#330000 start_bit = 1;read_write=1;//read from slave 
+ 	 	#10000 start_bit = 0; 
+ 	 	// Add stimulus here 
+ 
+ 	end 
+       
+endmodule 

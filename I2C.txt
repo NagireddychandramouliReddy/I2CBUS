@@ -1,0 +1,154 @@
+module i2c_bus_protocol( 
+     input reset, 
+ 	  input clk,  	  input [6:0] addr,  	  input [7:0] data,  	  input start_bit,  	  inout sda,  	  input read_write,  	  output [7:0]dout 
+    ); 
+ 	 wire scl,i2c_clock; 
+ 	  
+ frequency_divider fD (reset,clk,i2c_clock); 
+ i2c_bus_master Mstr 
+(i2c_clock,reset,start_bit,addr,data,read_write,sda,dout,scl);  i2c_slave1 Slv (sda,scl,reset); endmodule 
+//frequency divider module for getting 100kHz clock for i2c bus 
+module frequency_divider(   input reset_in, 
+ input ref_clk, //reference clock = system clock  output reg clk_out); 
+  
+ reg [8:0] counter;  
+  
+ always @(posedge(ref_clk),posedge(reset_in))   begin   if(reset_in)    begin 
+   clk_out <= 0; counter <= 9'd499; 
+ 	end 
+  else if(counter == 0)    begin   clk_out <= ~clk_out;   counter <=9'd499;   end 
+  else counter <= counter-1'b1;    end 
+endmodule //i2c master module i2c_bus_master(  input i2c_clk,     input reset,  input start_bit, 
+input [6:0] addrin, input [7:0] datain, input read_or_write, 
+ inout sda, //serial data  output reg [7:0] dataout,  output scl  //serial clock 
+              ); 
+ 	 	 	 	   
+  parameter IDLE = 0;   parameter START = 1;   parameter ADDRESS = 2;   parameter RW = 3;   parameter ACK = 4;   parameter READ_WAIT = 5;   parameter RDATA = 6;   parameter WDATA = 7;   parameter DATA_ACK = 8;   parameter STOP = 9; 
+   
+  wire sda_enable;   reg scl_enable; 
+  reg data;//serial data to sda since inout port sda cannot be a reg type   reg [2:0] count;   reg [3:0] state,nstate; 
+ //assign scl = (nstate==START)?1'b0:1'bx; 
+ assign sda_enable = (nstate == ACK) ||(nstate == READ_WAIT) ||(nstate == 
+RDATA) || (nstate == DATA_ACK) ? 1'b0 : 1'b1; 
+assign scl = (scl_enable == 1'b0) ? 1'b1 : ~i2c_clk; assign sda = (sda_enable == 1'b1) ? data : 1'bz; always @(posedge (i2c_clk),posedge(reset))// for scl 
+  begin 
+   if(reset) scl_enable <= 0;    else if((state == IDLE) || (state == STOP))      scl_enable <= 0;     else scl_enable <= 1;   end 
+  
+ always @(posedge (i2c_clk),posedge (reset))  begin  if(reset) nstate <= IDLE;  else nstate <= state;   end 
+  
+ always @(posedge (i2c_clk),posedge (reset)) //for sda  begin    if(reset)    begin    state <= IDLE; 
+ 	data <= 1'b1;  	count <= 3'h6;    end   else    begin 
+case(state) 
+IDLE:begin //idle  state      data <= 1'b1; 
+ 	 	  if(start_bit) begin  	 	  data<=0;  	 	  state <= START; 
+ 	 	  end 
+ 	 	  else state <= IDLE;  	     end 
+ 	 
+ 	START:begin //start the transfer sda = 0  	      data <= 1'b0;  	      state <= ADDRESS; 	          count <= 3'h6; 	 	 	  	      end 
+ 	 
+ 	ADDRESS:begin //address of slave  	        data <= addrin[count];  	        if (!count) state <= RW;   	 	 	  else  	 	 	   begin 
+ 	 	 	   count <= count-3'b1; state <= ADDRESS;   	 	 	 	end  	 	 	  end 
+ RW:begin //write (0),read (1)     if(read_or_write) data <= 1;    else data <= 0;  
+	 	state <= ACK; 
+	 	end 
+ 	 	 	 
+ 	ACK:begin //acknowledgement from slave  	 	 count <= 8'h7;//sda_enable 0  	 	 if(sda == 1) state <= READ_WAIT;  	 	 else state <= WDATA; 
+ 	 	 end 
+ 	 
+ 	READ_WAIT:begin 
+ 	          //waiting (one clock cycle) for slave to put data on sda line 
+ 	 	 	 	 state<=RDATA; 
+ 	 	 	 	 end 
+ 	RDATA:begin //reading data from slave  	      dataout[count] <= sda; //sda_enable 0  	 	   if (!count) state <= DATA_ACK;  
+ 	 	 	else  	 	 	 begin 
+ 	 	 	 count <= count-3'b1; state <= RDATA ;   	 	    end  	 	   end    
+ 	 	   
+ 	WDATA:begin //writing data to slave  	      data <= datain[count];   	 	   if (!count) state <= DATA_ACK;   	 	else  	 	 begin 
+	 	 	 count <= count-3'b1; state <= WDATA ;  
+ 	 	    end  	 	   end 
+ 	DATA_ACK:begin //slave acknowlegdes data transfer ,sda = 0  	         if(sda == 0) state <= STOP;//sda_enable 0  	 	 	   else if(sda ==1) state <= STOP; 
+ 	 	 	// 	else state <= IDLE; 
+ 	 	 	 	end 
+ 	 	 	 	 
+ 	STOP:begin //data transfer complete  	     data <= 1; state <= IDLE; 
+ 	 	  end 
+ 	 
+ 	default:state <= IDLE; 
+ 	 
+ 	endcase 	  	end  end endmodule 
+// i2c_slave 
+module i2c_slave1(serial_in,clk,reset);//slave at address A9h  inout serial_in;//serial_in is sda  input clk,reset;//clk to slave is scl 
+   
+reg [6:0] addr; reg [7:0] data; reg [3:0] state; 
+ reg [2:0] count; 
+ reg ack_bit,ack_enable,read_enable,read_bit; 
+  
+  parameter IDLE = 0;   parameter ADDR_IN = 1;   parameter RW = 2;//write (0),read (1)   parameter WACK = 3;   parameter RACK = 4;   parameter READ = 5;   parameter WRITE = 6;   parameter D_ACK = 7;     parameter STOP = 8;  
+  //assign serial_in=(state==IDLE)?((clk==1)?1:1'bz):1'bz;   assign serial_in=(state==D_ACK)? (( clk==0)?1'b0:1'bz):1'bz;  
+   
+  assign serial_in = ((ack_enable ^ read_enable) == 1) ? (ack_enable ? ack_bit : (read_enable ? read_bit :1'bz)) : 1'bz; 
+  
+ always @(posedge(clk),posedge(reset))   begin 
+  if(reset)            begin 
+ 	  data <=8'b0;  	  state <= IDLE;   ack_enable <= 1'b0;   read_enable<= 1'b0;   ack_bit <= 1'b0; 
+ 	  read_bit <= 1'b0; 
+ 	  end 
+  else    case(state) 
+ 	IDLE :begin   	      ack_enable <= 1'b0; 
+         if(serial_in == 1'b0)   	 	 	 begin 
+ 	 	 	 state <= ADDR_IN;count <=7'h6; 
+ 	 	 	 end 
+         else state <= IDLE;          
+ 	 	   end 
+ 	 	 	 
+   ADDR_IN:begin  	        addr[count] <= serial_in; 
+ 	 	 	  if(count == 3'b0) state <= RW;  	 	 	  else   	 	 	   begin 
+      count <= count-3'b1;       state <= ADDR_IN;             end 
+	 	     end 	 
+RW:begin 
+   if(addr == 7'h69)begin 
+ 	//$display("serial_in %3b",serial_in);      if(serial_in == 1'b0) begin 
+ 	 	  ack_enable <= 1'b1; 
+     	  ack_bit <= 1'b0; 
+ 	 	  state <= WACK;  	 	  end//write acknowledge 
+ 	 	  else 
+ 	 	 	begin 
+ 	 	 	ack_enable<=1;  	 	 	ack_bit<=1;  	   
+ 	 	 	state <= RACK;//read acknowledge 
+ 	 	  end  	 	  end 
+ 	 	else state<= IDLE; 
+ 	 	end 
+ 	 	 
+ 	WACK:begin 
+        ack_enable <= 1'b1; 
+     	  ack_bit <= 1'b0;//ack_bit is 0 for write acknowledge  	 	  count <= 8'h7;  	 	  state <= WRITE;  	 	  end 
+ 	 	   
+WRITE:begin //write to slave       ack_enable <= 1'b0;       data[count] <= serial_in; 
+	 	 	if(count == 0) state <= D_ACK; 
+	 	 	else  
+ 	 	 	 begin 
+ 	 	 	 count <= count-3'b1; 
+ 	 	 	  	 	 state <= WRITE; 
+ 	 	 	 end 
+ 	 	   end 
+  
+   RACK:begin          ack_enable <= 1'b1; 
+     	  ack_bit <= 1'b1;//ack_bit is 1 for read acknowledge 
+ 	 	  count <= 8'h7;  	 	  state <= READ; 
+ 	 	  end  
+ 	 	   
+   READ:begin//read from slave  	      ack_enable <= 1'b0; 
+ 	 	 	read_enable <= 1'b1;  	      read_bit <= data[count];  	 	 	if(count == 0)   	 	 	 begin 
+ 	 	 	 state <= D_ACK; //read_enable <= 1'b0;  	 	 	 end  	 	 else   	 	 begin 
+ 	 	 count <= count-3'b1;  	 	 state <= READ; 
+	 	 	 end 
+ 	 	  end 
+ 	 	   
+ 	D_ACK:begin //data transfer acknowledge  	 	   read_enable <= 1'b0;  	 	 	ack_enable <= 1'b1; 
+         ack_bit <= 1'b0;          state <= STOP; 
+ 	 	   end 
+ 	STOP:begin 
+        ack_enable <= 1'b0;         state <= IDLE;  	    	     end 
+   
+  endcase  end endmodule 
+ 
